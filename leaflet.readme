@@ -1,0 +1,4 @@
+wget https://leafletjs-cdn.s3.amazonaws.com/content/leaflet/v1.8.0/leaflet.zip
+mkdir leaflet
+cd leaflet
+unzip ../leaflet.zip

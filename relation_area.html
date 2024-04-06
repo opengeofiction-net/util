@@ -1,0 +1,513 @@
+<html>
+<head>
+<title>Relation area calculator</title>
+
+<link rel="stylesheet" href="leaflet/leaflet.css" />
+<script src="leaflet/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/lodash/4.17.4/lodash.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.4.3/proj4.js"></script>
+
+<script src="OGFUtil.js"></script>
+
+<style>
+
+ul.ogf-menu {
+   list-style-type: none;
+   margin:  0px;
+   padding: 0px;
+}
+
+.ogf-menu li {
+    margin:  0px;
+    padding: 5px;
+}
+
+.ogf-menu li:hover {
+    background-color: #CCEEFF;
+    padding: 5px;
+}
+
+table {
+    font-size: 9pt;
+}
+
+.dbx-btn {
+//    height: 
+}
+
+
+</style>
+
+
+<script type="text/javascript">
+
+var OGF = OGFUtil();
+var mapOptions = {};
+var rlat = 90, rlon = 360;
+var worldPolygon	= [ [-rlat,-rlon], [-rlat,rlon], [rlat,rlon], [rlat,-rlon] ];
+var inputBox, downloadBox;
+//var QUERY_STR = '';
+
+
+//--------------------------------------------------------------------------------------------------
+
+L.Control.InputBox = L.Control.extend( {
+    options: {
+        position: 'bottomleft'
+    },
+    onAdd: function( map ){
+        var self = this;
+        var div = L.DomUtil.create( 'div', 'inputbox-container' );
+        div.style.backgroundColor = '#FFFFFF';
+        div.style.padding = '5px 10px 5px 10px';
+
+        var fd = this.field = L.DomUtil.create( 'div', 'field', div );
+        var lb = L.DomUtil.create( 'label', '', fd );
+        lb.innerHTML = this.options.label;
+
+        var inp = this.input = L.DomUtil.create( 'input', 'field-input', fd );
+        inp.id = 'q';
+        inp.setAttribute( 'type', 'text' );
+        inp.value = this.options.value || '';
+        var infoBox = this.infobox = L.DomUtil.create( 'div', 'infobox', div );
+
+        if( this.options.onKeyPress ){
+            self.onKeyPress = self.options.onKeyPress;
+        }
+        inp.addEventListener( 'keypress', function(evt){
+            if( evt.keyCode === 13 ){
+                self.onKeyPress( inp.value, infoBox );
+            }
+        } );
+        L.DomEvent.disableClickPropagation( div );
+
+        return div;
+    },
+    onRemove: function( map ){
+        // when removed
+    },
+    onKeyPress: null,
+} );
+
+L.control.inputBox = function( id, options ){
+    return new L.Control.InputBox( id, options );
+}
+
+
+//--------------------------------------------------------------------------------------------------
+
+L.Control.DownloadBox = L.Control.extend( {
+    options: {
+        position: 'bottomleft'
+    },
+    onAdd: function( map ){
+        var self = this;
+        var div = L.DomUtil.create( 'div', 'downloadbox-container' );
+        div.style.backgroundColor = '#FFFFFF';
+        div.style.padding = '5px 10px 5px 10px';
+
+        var fdS = this.fieldSimplify = L.DomUtil.create( 'div', 'dbx-field', div );
+        var lb = L.DomUtil.create( 'label', '', fdS );
+        lb.innerHTML = 'Simplify';
+        var inp = this.input = L.DomUtil.create( 'input', 'field-input', fdS );
+        inp.value = 5;
+        inp.style.width = '115px';
+        inp.style.marginLeft = '10px';
+        fdS.style.padding = '5px 2px 5px 2px';
+
+        inp.addEventListener( 'keypress', function(evt){
+            if( evt.keyCode === 13 ){
+                var tolerance = parseFloat( inp.value );
+                self.simplifyPolygon( map, tolerance );
+            }
+        } );
+
+        var fdD = this.fieldSimplify = L.DomUtil.create( 'div', 'dbx-field', div );
+        fdD.style.padding = '5px 2px 5px 2px';
+        var btD = this.buttonDownload = L.DomUtil.create( 'button', 'dbx-btn', fdD );
+        btD.innerHTML = 'Download';
+        btD.style.marginRight = '10px';
+
+        var sel = L.DomUtil.create( 'select', 'dbx-select-download', fdD );
+        var opt1 = L.DomUtil.create( 'option', '', sel );
+        var opt2 = L.DomUtil.create( 'option', '', sel );
+        opt1.value = opt1.innerHTML = 'JSON';
+        opt2.value = opt2.innerHTML = 'Multimap';
+
+        var link = L.DomUtil.create( 'a', 'save-link', div );
+        link.style.disply = 'none';
+
+        btD.addEventListener( 'click', function(evt){
+            self.downloadPolygon( link, sel.value );
+        } );
+
+        L.DomEvent.disableClickPropagation( div );
+
+        return div;
+    },
+    onRemove: function( map ){
+        // when removed
+    },
+
+    _relId:       null,
+    _polygon:     null,
+    _polygonData: null,
+
+    setPolygon: function( relId, polygon ){
+        this._relationId  = relId;
+        this._polygon     = polygon;
+        this._polygonData = polygon.getLatLngs();
+    },
+
+    simplifyPolygon: function( map, tolerance ){
+        console.log( "tolerance <" + tolerance + ">" );  // _DEBUG_
+        var polygonData = isNaN(tolerance) ? this._polygonData : OGF.simplifyPolyline( map, this._polygonData, tolerance );
+        this._polygon.setLatLngs( polygonData );
+    },
+
+    downloadPolygon: function( downloadLink, fmt ){
+        var fileName = 'polygon-' + this._relationId;
+
+        var saveData = this._polygon.getLatLngs().filter( function(x,i){ return i > 0; } );
+//      saveData.shift();  // remove WorldRectangle;
+        if( fmt === 'JSON' ){
+//          saveData = JSON.stringify( saveData, null, 2 );
+            saveData = JSON.stringify( saveData );
+            fileName += '.json';
+        }else if( fmt === 'Multimap' ){
+            if( ! Array.isArray(saveData[0]) )  saveData = [ saveData ];
+            saveData = saveData.map( function(x1){
+                return x1.map( function(x2){ return x2.lat +','+ x2.lng; } ).join(':');
+            } ).join("\n");
+            fileName += '.txt';
+        }
+        var blob = new Blob( [saveData], {type : 'application/json'} );
+        downloadLink.href = window.URL.createObjectURL( blob );
+        downloadLink.download = fileName;
+        downloadLink.style.display = 'none';
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+    },
+
+} );
+
+L.control.downloadBox = function( id, options ){
+    return new L.Control.DownloadBox( id, options );
+}
+
+//--------------------------------------------------------------------------------------------------
+
+
+
+function loadMap(){
+    map = L.map( 'map', mapOptions ).setView([0, 90], 3);
+    var ogfMap = OGF.map( map, {layers: 'Standard,TopoMap'} );
+//  var hParam = OGF.setUrlLocation( map, null, {fields: ['field-input']} );
+
+    downloadBox = L.control.downloadBox().addTo( map );
+    inputBox    = L.control.inputBox( {label: 'Relation '} ).addTo( map );
+
+//  if( hParam.q ){
+//      onKeyPress( QUERY_STR, inputBox.infobox );
+//  }
+
+    var hParam = OGF.setUrlLocation( map, null, {fields: ['q']} );
+//  if( hParam.q )  QUERY_STR = hParam.q;
+    var areaPolygon;
+
+    inputBox.onKeyPress = function( queryStr, infoBox ){
+        if( areaPolygon )  areaPolygon.remove();
+        relationQuery( queryStr, null, function(relId,ctx){
+//			console.log( "ctx = " + JSON.stringify(ctx,null,"  ") );  // _DEBUG_
+            var bbox = null;
+            var errors = {nodes: {}, ways: {}};
+            _.forEach( ctx.relation[relId].members, function(mb){	
+//              console.log( "ref=" + mb.ref + "  type=" + mb.type + "  role=" + mb.role );  // _DEBUG_
+                if( mb.type === 'way' && ! mb.role.match(/^(inner|outer)$/) ){
+                    errors.ways[mb.ref] = '<b>role</b> is neither <i>outer</i> nor <i>inner</i>';
+                    var polyline = OGF.wayPoints( mb.ref, ctx );
+                    var hGeo = OGF.wayGeometry( polyline );
+                    bbox = OGF.rectUnion( bbox, hGeo.bbox );
+                }
+            } );
+
+            var closedWays = OGF.buildWaySequence( ctx, relId, null, {role: 'outer', copy: true} );
+            _.forEach( closedWays, function(way){
+                if( way.nodes[0] !== way.nodes[way.nodes.length-1] ){
+                    errors.nodes[way.nodes[0]]                  = 'open endpoint';
+                    errors.nodes[way.nodes[way.nodes.length-1]] = 'open endpoint';
+                }
+            } );
+
+//			console.log( "closedWays = " + JSON.stringify(closedWays,null,"  ") );  // _DEBUG_
+            closedWays = _.map( closedWays, function(way){
+//				console.log( "way.nodes = " + JSON.stringify(way.nodes,null,"  ") );  // _DEBUG_
+                var polygon = OGF.wayPoints( way, ctx );
+                var hGeo = OGF.wayGeometry( polygon );
+//				if( hGeo.orientation < 0 ) 	polygon = _.reverse( polygon );
+                bbox = OGF.rectUnion( bbox, hGeo.bbox );
+                return polygon;
+            } );
+
+            var innerWays = OGF.buildWaySequence( ctx, relId, null, {role: 'inner', copy: true} );
+            _.forEach( innerWays, function(way){
+                if( way.nodes[0] !== way.nodes[way.nodes.length-1] ){
+                    errors.nodes[way.nodes[0]]                  = 'open endpoint';
+                    errors.nodes[way.nodes[way.nodes.length-1]] = 'open endpoint';
+                }
+            } );
+
+            innerWays = _.map( innerWays, function(way){
+//				console.log( "way.nodes = " + JSON.stringify(way.nodes,null,"  ") );  // _DEBUG_
+                var polygon = OGF.wayPoints( way, ctx );
+                var hGeo = OGF.wayGeometry( polygon );
+                bbox = OGF.rectUnion( bbox, hGeo.bbox );
+                return polygon;
+            } );
+            Array.prototype.push.apply( closedWays, innerWays );
+
+            var areaSize, areaSizeSqm;
+            if( _.size(errors.nodes) === 0 && _.size(errors.ways) === 0 ){
+//              closedWays = OGF.simplifyPolyline( map, closedWays, 5 );
+                closedWays.unshift( worldPolygon );
+//    			    areaPolygon = L.polygon( closedWays, {weight: 1.5} ).addTo( map );
+                areaPolygon = L.polygon( closedWays, {weight: 1, color: '#000000', fillColor: '#000000', fillOpacity: 0.25} ).addTo( map );
+                areaSize = OGF.geoArea( ctx, relId, bbox );
+                areaSizeSqm = (areaSize / 2.589988110336).toFixed(2);
+                console.log( "areaSizeSqm <" + areaSizeSqm + ">" );  // _DEBUG_
+                areaSize    = areaSize.toFixed(2);
+                console.log( "areaSize <" + areaSize + ">" );  // _DEBUG_
+                downloadBox.setPolygon( relId, areaPolygon );
+            }else{
+                areaPolygon = L.layerGroup().addTo( map );
+                _.forEach( ctx.relation[relId].members, function(mb){
+                    if( ! mb.type === 'way' )  return;
+                    if( ! ctx.way[mb.ref] ){
+                        return;
+                    }
+                    var pl = OGF.wayPoints( mb.ref, ctx );
+                    var popupTextW = 'Way <a href="' + OGF.config.API_URL + 'way/' + mb.ref + '">' + mb.ref + '</a>';
+                    if( errors.ways[mb.ref] ){
+                        popupTextW += '<br>' + errors.ways[mb.ref];
+                        L.polyline( pl, {color: '#FF0000', weight: 5} ).addTo( areaPolygon ).bindPopup( popupTextW );
+                    }else{
+                        L.polyline( pl, {color: '#000000'} ).addTo( areaPolygon ).bindPopup( popupTextW );
+                    }
+                } );
+                _.forEach( errors.nodes, function(errorText,nodeId){
+                    var node = ctx.node[nodeId];
+                    var popupTextN = 'Node <a href="' + OGF.config.API_URL + 'node/' + nodeId + '">' + nodeId + '</a><br>' + errorText;
+                    L.marker( {lat: node.lat, lng: node.lon}, {icon: OGF.icons.red} ).addTo( areaPolygon ).bindPopup( popupTextN );
+                } );
+                areaSize = '';
+            }
+
+            map.fitBounds( [[bbox[1], bbox[0]], [bbox[3], bbox[2]]] ); 
+            infoBoxDisplay( infoBox, ctx, relId, [areaSize,areaSizeSqm] );
+//          infoBox.innerHTML = areaSize;
+        } );
+    };
+
+    if( hParam.q ){
+        inputBox.onKeyPress( hParam.q, inputBox.infobox );
+    }
+}
+
+function infoBoxDisplay( infoBox, ctx, relId, areaSize ){
+    infoBox.innerHTML = '';
+    var tb = document.createElement( 'table' );
+    infoBox.appendChild( tb );
+    addTableRow( tb, [ 'ID', '<a href="' + OGF.config.API_URL + 'relation/' + relId + '">' + relId + '</a>' ] );
+    if( areaSize ){
+        addTableRow( tb, [ 'Area', areaSize[0] + ' km&sup2;<br>' + areaSize[1] + ' sq mi' ] );
+    }
+    _.forEach( ctx.relation[relId].tags, function(v,k){
+        addTableRow( tb, [ k, v ] );
+    } );
+}
+
+function addTableRow( tableElem, data ){
+    var tr = document.createElement( 'tr' );
+    tableElem.appendChild( tr );
+    _.forEach( data, function(val){
+        var td = document.createElement( 'td' );
+        tr.appendChild( td );
+        td.innerHTML = val;
+    } );
+}
+
+function relationQuery( queryStr, requestQueue, cb ){
+    if( ! requestQueue ){
+        requestQueue = [{
+            method: 'getOverpassData',
+            args:   [ 'relation('+ queryStr +');' ],
+            runIf:  queryStr.match(/^\d+$/),
+        }, {
+            method: 'getOverpassData',
+            args:   [ 'way('+ queryStr.substr(1) +');' ],
+            runIf:  queryStr.match(/^[wW]\d+$/),
+            type:   'way',
+        }, {
+            method: 'getOverpassData',
+            args:   [ 'relation["ogf:area"="'+ queryStr + '"];' ],
+        }, {
+            method: 'getOverpassData',
+            args:   [ 'relation["ogf:id"="'+ queryStr + '"];' ],
+        }, {
+            method: 'getOverpassData',
+            args:   [ 'relation["ref"="' + queryStr + '"];' ],
+//      }, {
+//          method: 'runRequest',
+//          args:   [ 'GET', OGF.config.NOMINATIM_URL + 'search?format=json&q=' + encodeURIComponent(queryStr), '' ],
+        }, {
+            method: 'getOverpassData',
+            args:   [ 'relation["name"~"' + queryStr + '",i];' ],
+        }];
+    }
+
+    if( requestQueue.length <= 0 ){
+        menuOpen( ['The search returned no results'], cb2 );
+        return;
+    }
+
+    var cb2 = function( obj ){
+        var id = obj.id || obj.osm_id;
+        id = parseInt( id );
+        if( obj.type === 'way' ){
+            var query = '(way('+ id +'); >;);'
+//          console.log( "query <" + query + ">" );  // _DEBUG_
+            OGF.getOverpassData( query, function(ctx){
+                console.log( "ctx = " + JSON.stringify(ctx,null,"  ") );  // _DEBUG_
+                ctx = OGF.typeMap( ctx );
+                addPseudoRelation( id, ctx );
+                cb( id, ctx );
+            } );
+        }else{
+            OGF.getRelationData( id, function(ctx){
+                cb( id, ctx );
+            } );
+        }
+    };
+
+    var req = requestQueue.shift();	
+    if( req.runIf || !('runIf' in req) ){
+        req.args.push( function(result){
+            if( _.isString(result) )  result = JSON.parse( result );
+            if( result.elements )     result = result.elements;
+            var type = req.type || 'relation';
+            result = _.filter( result, function(x){ return (x.type === type || x.osm_type === type); } );
+//          console.log( "result = " + JSON.stringify(result,null,"  ") );  // _DEBUG_
+            var sz = _.size( result );
+//          console.log( "sz <" + sz + ">" );  // _DEBUG_
+            if( sz === 1 ){
+                var relId = result.id;
+//				console.log( "rel = " + JSON.stringify(rel,null,"  ") );  // _DEBUG_
+                cb2( result[0] );
+            }else if( sz > 1 ){
+                menuOpen( result, cb2 );
+            }else{
+                relationQuery( queryStr, requestQueue, cb );
+            }
+        } );
+        OGF[req.method].apply( OGF, req.args ); 
+    }else{
+        relationQuery( queryStr, requestQueue, cb );
+    }
+}
+
+function addPseudoRelation( wayId, ctx ){
+    ctx.relation[wayId] = {
+        id:   wayId,
+        type: 'relation',
+        tags: ctx.way[wayId].tags,
+        members: [{
+            type: 'way',
+            ref:  wayId,
+            role: 'outer',
+        }],
+    };
+}
+
+
+function menuOpen( elements, cb ){
+    inputBox.field.style.display = 'none';
+    inputBox.infobox.innerHTML = '';
+    var ul = document.createElement( 'ul' );
+    ul.setAttribute( 'class', 'ogf-menu' );
+    ul.style.maxHeight = window.innerHeight-60;
+    ul.style.overflow = 'auto';
+    inputBox.infobox.appendChild( ul );
+
+    var mc = document.createElement( 'div' );   // menu close
+    mc.style.height = 30;
+    mc.onclick = function(){ menuSelect(); };
+    inputBox.infobox.appendChild( mc );
+
+    _.forEach( elements, function(item){
+        var li = addMenuItem( ul, item, cb );
+    } );
+}
+
+function addMenuItem( listElem, item, cb ){
+//	console.log( "item = " + JSON.stringify(item,null,"  ") );  // _DEBUG_
+    var li = document.createElement( 'li' );
+    if( item ){
+        li.innerHTML = itemText( item );
+        li.onclick = function(){
+            menuSelect( item, cb );
+        };
+    }else{
+        li.innerHTML = '&nbsp;';
+        li.onclick = function(){
+            menuSelect();
+        };
+    }
+    listElem.appendChild( li );
+}
+
+function menuSelect( item, cb ){
+    inputBox.infobox.innerHTML   = '';
+    inputBox.field.style.display = 'block';
+    if( item && _.isObject(item) ){
+        cb( item );
+    }
+}
+
+function itemText( item ){
+    var text;
+    if( _.isString(item) ){
+        text = item;
+    }else if( item.id ){  // Overpass result
+        text = '<b>' + item.id + '</b>';
+        if( item.tags ){
+            if( item.tags.name ){
+                text += ' ' + item.tags.name + '<br>';
+            }
+            _.forEach( item.tags, function(v,k){
+                if( k.match(/^(colou?r|name)$/) )  return;
+                text += ' | ' + k + '=' + v;
+            } );
+        }
+    }else if( item.osm_id ){  // Nominatim result
+        text = '<b>' + item.osm_id + '</b> ' + item.display_name + '<br>' + item['class'] + '=' + item.type;
+    }else{
+        text = 'Unsupported object: ' + JSON.stringify(item);
+    }
+    return text;
+}
+
+
+
+
+</script>
+
+</head>
+<body style="margin:0px;" onload="loadMap()">
+
+<div id="map" style="width:100%;height:100%;"></div>
+
+</body>
+</html>
+
+
+

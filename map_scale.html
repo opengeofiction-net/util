@@ -1,0 +1,451 @@
+<html>
+<head>
+<title>OGF scale helper</title>
+
+<link rel="stylesheet" href="leaflet/leaflet.css" />
+<script src="leaflet/leaflet.js"></script>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/perliedman-leaflet-control-geocoder/1.5.4/Control.Geocoder.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/perliedman-leaflet-control-geocoder/1.5.4/Control.Geocoder.min.js"></script>
+
+<link rel="stylesheet" href="https://ppete2.github.io/Leaflet.PolylineMeasure/Leaflet.PolylineMeasure.css" />
+<script src="https://ppete2.github.io/Leaflet.PolylineMeasure/Leaflet.PolylineMeasure.js"></script>
+<!-- <script src="./Leaflet.PolylineMeasure.js"></script> -->
+
+<script src="OGFUtil.js"></script>
+
+<script type="text/javascript">
+
+
+var OGF = OGFUtil();
+
+var mapOptions = {
+	zoomControl:        true,
+	attributionControl: true,
+	zoomSnap:  0,
+    scrollWheelZoom:    false,
+    doubleClickZoom:    false,
+};
+
+var PIXEL_PITCH = 0.2767;   // 0.2692
+//var fixedParam = 'scale';
+
+
+
+var evCt = 0;
+var zoomFlag = false;
+var map, map2, ogfMap, ogfMap2;
+var map_1_width = null;
+var gcOGF, gcOSM;
+
+
+function loadMap(){
+
+    map = L.map( 'map', mapOptions );
+ 	ogfMap = OGF.map( map, {layers: '+Standard,TopoMap,OpenStreetMap'} );
+
+    mapOptions.zoomControl = false;
+    map2 = L.map( 'map2', mapOptions );
+ 	ogfMap2 = OGF.map( map2, {layers: '+OpenStreetMap,OpenTopoMap,Standard'} );
+
+ 	var hParam = OGF.setUrlLocation( [ogfMap,ogfMap2], null, {fields: ['pxpt','scale']} );
+
+	mapScaleInit( ogfMap, ogfMap2, [20.7241, 86.7183], hParam );
+    ogfMap.eventBlock( 'move', 'zoom' );
+	map.setView( ogfMap._position.center, ogfMap._position.zoom );
+
+	mapScaleInit( ogfMap2, null, [38.8875, -77.0280], hParam );
+    ogfMap2.eventBlock( 'move', 'zoom' );
+	map2.setView( ogfMap2._position.center, ogfMap2._position.zoom );
+
+  	ogfMap.positionDisplay();
+  
+    gcOGF = L.Control.Geocoder.nominatim( {serviceUrl: OGF.config.OVERPASS_URL} );
+    gcOGF.geocode = ogfGeocode;
+    gcOSM = L.Control.Geocoder.nominatim();
+  	var gc  = new L.Control.Geocoder( {geocoder: gcOGF, position: 'bottomright'} ).addTo( map );
+  	var gc2 = new L.Control.Geocoder( {geocoder: gcOSM, position: 'bottomright'} ).addTo( map2 );
+
+  	map.on( 'baselayerchange', function(ev){
+  		gc.options.geocoder = ev.name.match(/^(Open|Relief)/) ? gcOSM : gcOGF;
+  	} );
+  	map2.on( 'baselayerchange', function(ev){
+  		gc2.options.geocoder = ev.name.match(/^(Open|Relief)/) ? gcOSM : gcOGF;
+  	} );
+
+  	L.control.polylineMeasure( {position: 'topleft', imperial:false} ).addTo(map);
+ 	L.control.polylineMeasure( {position: 'topleft', imperial:false} ).addTo(map2);
+  	fieldSelect( 'scale' );
+
+    var elemC  = document.getElementById('mapcontainer');
+    var elemD  = document.getElementById('divider');
+    var elemM1 = document.getElementById('map');
+    var elemM2 = document.getElementById('map2');
+    var dvDrag = false;
+
+    elemD.addEventListener( 'mousedown', function(evt){
+        dvDrag = true;
+    }, true );
+    elemD.addEventListener( 'dblclick', function(evt){
+        var x = evt.pageX;
+        var dd;
+        if( map_1_width ){
+            dd = map_1_width;
+            map_1_width = null;
+        }else{
+            dd = 99.5;
+            map_1_width = parseFloat( elemM1.style.width );
+        }
+        elemM1.style.width = '' + dd + '%';
+        elemM2.style.width = '' + (100 - dd - .5) + '%';
+    }, true );
+    elemC.addEventListener( 'mousemove', function(evt){
+        if( ! dvDrag )  return;
+        var x = evt.pageX;
+        var wd = elemC.offsetWidth;
+        var dd = (x / wd * 100);
+//      console.log( "dd <" + dd + ">" );  // _DEBUG_
+        elemM1.style.width = '' + dd + '%';
+        elemM2.style.width = '' + (100 - dd - .5) + '%';
+    }, true );
+    elemC.addEventListener( 'mouseup', function(evt){
+        if( ! dvDrag )  return;
+        setTimeout( function(){
+            map.invalidateSize();
+            map2.invalidateSize();
+        }, 100);
+        dvDrag = false;
+    }, true );
+
+    var divPos = ('div' in hParam)? parseInt(hParam.div) : 50;
+    setDivider( divPos );
+}
+
+
+
+function ogfGeocode( query, cb, context ){
+    OGF.overpassSearch( query, {max: 10, types: ['node']}, function(ctx){
+        var results = [];
+        var data = ctx.elements, lat, lon;
+        for( var i = 0; i < data.length; ++i ){
+            lat = data[i].lat;
+            lon = data[i].lon;
+            results[i] = {
+//              icon: data[i].icon,
+                name: data[i].tags.name,
+//              html: this.options.htmlTemplate ? this.options.htmlTemplate(data[i]) : undefined,
+                bbox: L.latLngBounds([lat, lon], [lat, lon]),
+                center: L.latLng( lat, lon ),
+                properties: data[i],
+            };
+        }
+        cb.call( context, results );
+    } );
+}
+
+
+function mapScaleInit( ogfm, ogfm2, latLon, hParam ){
+
+	var center = {lat: latLon[0], lng: latLon[1]};
+    var pxpt = document.getElementById('pxpt').value || PIXEL_PITCH;
+    var scale, zoom;
+
+    if( hParam ){
+        if( hParam.map && ogfm2 ){
+            var lc = OGF.parseLocation( hParam.map );
+            center = {lat: lc.lat, lon: lc.lon};
+            zoom = lc.zoom;
+        }
+        if( hParam.map2 && ! ogfm2 ){
+            var lc2 = OGF.parseLocation( hParam.map2 );
+            center = {lat: lc2.lat, lon: lc2.lon};
+        }
+        if( hParam.scale )  scale = hParam.scale;
+    }
+
+    var fixedParam = 'scale';
+    if( scale ){
+        zoom = OGF.scale2zoom( scale, center.lat, pxpt );
+    }else if( zoom ){
+        fixedParam = 'zoom';
+        scale = OGF.zoom2scale( zoom, center.lat, pxpt );
+    }else{
+        scale = 50000;
+        zoom = OGF.scale2zoom( scale, center.lat, pxpt );
+    }
+
+    ogfm._position = {
+        center:     center,
+        zoom:       zoom,
+        scale:      scale,
+        pxpt:       pxpt,
+        fixedParam: 'scale',
+    };
+	ogfm._eventBlocks = { zoom: [], move: [] };
+
+  	ogfm._map.zoomIn = function(){
+        ogfm._position.zoom  += 1;
+        ogfm._position.scale /= 2;
+		ogfm.setMapZoom( ogfm._position.zoom );
+        ogfm.positionDisplay();
+        if( ogfm2 ){
+            ogfm2._map.zoomIn();
+        }
+  	};
+
+  	ogfm._map.zoomOut = function(){
+        ogfm._position.zoom  -= 1;
+        ogfm._position.scale *= 2;
+		ogfm.setMapZoom( ogfm._position.zoom );
+        ogfm.positionDisplay();
+        if( ogfm2 ){
+            ogfm2._map.zoomOut();
+        }
+  	};
+
+    ogfm.setMapZoom = function( zoom ){
+        ogfm.eventBlock( 'move', 'zoom' );
+        ogfm._map.setZoom( zoom );
+    }
+
+    ogfm.eventBlock = function(){
+		var args = Array.prototype.slice.call( arguments );
+		args.map( function(key){
+			ogfm._eventBlocks[key].push( true );
+		} );
+	};
+
+    ogfm.positionDisplay = function(){
+        if( ogfm2 ){
+            ['zoom','scale','pxpt'].map( function(field){
+                var elem = document.getElementById( field );
+                elem.value = ogfm._position[field];
+            } );
+        }
+    };
+
+    ogfm.calculateNewZoom = function(){
+        var p = ogfm._position;
+        var newZoom = OGF.scale2zoom( p.scale, p.center.lat, p.pxpt );
+//      console.log( "A p.zoom <" + p.zoom + ">" );  // _DEBUG_
+//      console.log( "newZoom <" + newZoom + ">" );  // _DEBUG_
+        ogfm.positionDisplay();
+//      console.log( "A center = " + JSON.stringify(center,null,"  ") );  // _DEBUG_
+        if( Math.abs(p.zoom - newZoom) >= 1/256 ){
+            p.zoom = newZoom;
+            ogfm.setMapZoom( p.zoom );
+        }
+    };
+
+    ogfm.calculateNewScale = function( mapZoom ){
+        var p = ogfm._position;
+        p.scale = OGF.zoom2scale( p.zoom, p.center.lat, p.pxpt );
+//      console.log( "scale <" + scale + ">" );  // _DEBUG_
+        ogfm.positionDisplay();
+		if( mapZoom ){
+            ogfm.setMapZoom( p.zoom );
+		}
+        if( ogfm2 ){
+            ogfm2._position.scale = p.scale;
+            ogfm2.calculateNewZoom();
+        }
+    };
+
+//  Beobachtete Events:
+//  move -> moveend
+//  zoom -> moveend,zoomend  (in dieser Reihenfolge)
+
+    ogfm.moveEnd = function( ev ){
+        var eb = ogfm._eventBlocks.move.shift();
+        if( eb )  return;
+//      if( zoomFlag )  return;
+//      console.log( '--- moveend --- ' + (++evCt) );
+//		console.log( "moveend - ev = " + cyclicStringify(ev,"  ") );  // _DEBUG_
+		ogfm._position.center = ogfm._map.getCenter();
+        if( ogfm._position.fixedParam === 'scale' || ! ogfm2 ){
+			ogfm.calculateNewZoom();
+		}else if( ogfm._position.fixedParam === 'zoom' ){
+            ogfm.calculateNewScale();
+		}
+    };
+
+//  ogfm._map.on( 'zoomstart', function(){
+////      console.log( '--- zoomstart --- ' + (++evCt) );
+//		zoomFlag = true;
+//	} );
+
+    ogfm.zoomEnd = function( ev ){
+//		console.log( "B ogfm._position = " + JSON.stringify(ogfm._position,null,"  ") );  // _DEBUG_
+        var eb = ogfm._eventBlocks.zoom.shift();
+        if( eb )  return;
+        console.log( "B ogfm._position.zoom <" + ogfm._position.zoom + ">" );  // _DEBUG_
+//      console.log( '--- zoomend --- ' + (++evCt) );
+//		console.log( "zoomend - ev = " + cyclicStringify(ev,"  ") );  // _DEBUG_
+		ogfm.calculateNewScale( ! ev );
+//		setTimeout( function(){ zoomFlag = false; }, 200 );
+	};
+
+    ogfm._map.on( 'moveend', ogfm.moveEnd );
+    ogfm._map.on( 'zoomend', ogfm.zoomEnd );
+
+    return ogfm;
+}
+
+
+function fieldSelect( id ){
+    ogfMap._position.fixedParam = id;
+    ogfMap._position[id] = parseFloat( document.getElementById(id).value );
+    ogfMap2._position.fixedParam = id;
+    ogfMap2._position[id] = parseFloat( document.getElementById(id).value );
+
+//	console.log( "ogfMap._position = " + JSON.stringify(ogfMap._position,null,"  ") );  // _DEBUG_
+	var fdZoom  = document.getElementById('field-zoom');
+	var fdScale = document.getElementById('field-scale');
+	addClass( fdZoom,  'selected', id === 'zoom' );
+	addClass( fdScale, 'selected', id === 'scale' );
+}
+
+function addClass( elem, className, add ){
+	var classList = elem.className;
+    classList = classList.replace(className,'');
+    if( add ) classList += ' ' + className;
+    elem.className = classList;
+}
+
+function onClick( evt ){
+    console.log( 'onClick ' + (++evCt) );
+	var elem = evt.target;
+	var id   = elem.id.replace(/^field-/,'');
+    if( id === 'zoom' || id === 'scale' ){
+        fieldSelect( id );
+    }
+}
+
+function onEnter( evt ){
+//  console.log( "evt.key <" + evt.key + ">" );  // _DEBUG_
+//  console.log( "evt.keyCode <" + evt.keyCode + ">" );  // _DEBUG_
+//  console.log( "evt.charCode <" + evt.charCode + ">" );  // _DEBUG_
+//	if( evt.key === 'Enter' ){
+	if( evt.keyCode === 13 ){
+	    console.log( 'onEnter ' + (++evCt) );
+		var elem = evt.target;
+		var id   = elem.id;
+        if( id === 'scale' ){
+            fieldSelect( 'scale' );
+			ogfMap.moveEnd();
+			ogfMap2.moveEnd();
+        }else if( id === 'zoom' ){
+            fieldSelect( 'zoom' );
+			ogfMap.zoomEnd();
+			ogfMap2.zoomEnd();
+        }
+    }
+    return false;
+}
+
+function setDivider( dd ){
+    var elemM1 = document.getElementById('map');
+    var elemM2 = document.getElementById('map2');
+    elemM1.style.width = '' + dd + '%';
+    elemM2.style.width = '' + (100 - dd - .5) + '%';
+    setTimeout( function(){
+        map.invalidateSize();
+        map2.invalidateSize();
+    }, 100);
+}
+
+function locationNameSearch( query, cb ){
+    gcOSM.geocode( query, function(results){
+        cb( results );
+    } );
+}
+
+function moveToLocation( lon, lat ){
+    map.panTo( [lat,lon] );
+}
+
+function getCurrentLocation(){
+    return map.getCenter();
+}
+
+function getUrlQuery(){
+    return OGF.getUrlLocation( map );
+}
+
+function cyclicStringify( obj, indent ){
+	var seen = [];
+    var str = JSON.stringify(obj, function(key,val){
+       if( val != null && typeof val == "object" ){
+            if( seen.indexOf(val) >= 0 ){
+                return;
+            }
+            seen.push(val);
+        }
+        return val;
+    }, indent );
+	return str;
+}
+
+//  onmousedown="dvDown(event)" onmousemove="dvMove(event)" onmouseup="dvUp(event) onmouseout="dvUp(event)"
+
+</script>
+
+<style>
+
+label {
+  font-size: 10pt;
+  font-family: Helvetica;
+}
+
+.field {
+  float: left;
+  margin-right: 20px;
+  padding:      2px;
+}
+
+.selected {
+  border-style: solid;
+  border-color: #FF5500;
+  border-width: 2px;
+}
+
+
+</style>
+
+
+</head>
+<body style="margin:0px;" onload="loadMap()">
+
+<div id="mapcontainer" style="width:100%;height:95%;">
+  <!--
+  <div id="map"     style="float:left;width:50%;height:100%;"></div>
+  <div id="divider" style="float:left;width:0.5%;height:100%;cursor:col-resize;"></div>
+  <div id="map2"    style="float:left;width:49.5%;height:100%;"></div>
+  -->
+  <div id="map"     style="float:left;height:100%;"></div>
+  <div id="divider" style="float:left;width:0.5%;height:100%;cursor:col-resize;"></div>
+  <div id="map2"    style="float:left;height:100%;"></div>
+</div>
+
+<div id="fields" style="padding:5px;">
+  <div id="field-zoom" class="field" onclick="onClick(event)">
+    <label for="zoom">Zoom</label>
+    <input id="zoom" type="text" size="30" maxlength="255" onkeypress="onEnter(event)">
+  </div>
+
+  <div id="field-scale" class="field" onclick="onClick(event)">
+    <label for="scale">Scale 1 :</label>
+    <input id="scale" type="text" size="30" maxlength="255" onkeypress="onEnter(event)">
+  </div>
+
+  <div id="field-pxpt" class="field">
+    <label for="pxpt">Pixel Pitch</label>
+    <input id="pxpt" type="text" size="10" maxlength="255" onkeypress="onEnter(event)" readonly>
+  </div>
+
+</div>
+
+</body>
+</html>
+
+

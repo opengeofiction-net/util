@@ -1,0 +1,3 @@
+[submodule "Leaflet.loading"]
+	path = Leaflet.loading
+	url = https://github.com/ebrelsford/Leaflet.loading
