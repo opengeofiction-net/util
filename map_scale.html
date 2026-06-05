@@ -42,7 +42,7 @@ var gcOGF, gcOSM;
 function loadMap(){
 
     map = L.map( 'map', mapOptions );
- 	ogfMap = OGF.map( map, {layers: '+Standard,TopoMap,OpenStreetMap'} );
+    ogfMap = OGF.map( map, {layers: '+Standard,TopoMap,CyclOGF,OpenStreetMap'} );
 
     mapOptions.zoomControl = false;
     map2 = L.map( 'map2', mapOptions );
